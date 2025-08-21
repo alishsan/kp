@@ -1,0 +1,23 @@
+# Build artifacts
+/target/
+/classes/
+/checkouts/
+
+# Clojure caches
+/.cpcache/
+/.lein-*
+/.lein-repl-history
+
+# Java / OS
+*.class
+*.jar
+*.log
+.DS_Store
+
+# Editors/IDEs
+/.idea/
+*.iml
+/.classpath
+/.project
+/.settings/
+/.vscode/
