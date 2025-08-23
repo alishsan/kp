@@ -142,3 +142,96 @@
         (if in-band?
           (conj acc [start-E (double Emax)])
           acc)))))
+
+;; ---------------- Multilayer transfer-matrix formulation ----------------
+
+(defn- layer-matrix
+  "Transfer matrix for a single layer with constant potential V and width w at energy E.
+  Uses standard 2x2 form mapping [psi; psi'] across the layer.
+  Returns a vector [m11 m12 m21 m22]."
+  [E V w mu]
+  (let [mu (double (or mu 1.0))
+        E (double E)
+        V (double V)
+        w (double w)
+        d (- E V)]
+    (if (pos? d)
+      (let [k (Math/sqrt (/ d mu))
+            kw (* k w)
+            c (Math/cos kw)
+            s (Math/sin kw)
+            invk (/ 1.0 (safe k))]
+        [c (* invk s) (* -1.0 k s) c])
+      (let [kappa (Math/sqrt (/ (- V E) mu))
+            kw (* kappa w)
+            ch (Math/cosh kw)
+            sh (Math/sinh kw)
+            invk (/ 1.0 (safe kappa))]
+        [ch (* invk sh) (* kappa sh) ch]))))
+
+(defn- mat-mul
+  "Multiply two 2x2 matrices (flattened [a b c d])."
+  [[a b c d] [e f g h]]
+  [(+ (* a e) (* b g))
+   (+ (* a f) (* b h))
+   (+ (* c e) (* d g))
+   (+ (* c f) (* d h))])
+
+(defn dispersion-multilayer
+  "Compute D(E) = 0.5 * Tr(M_total) for a stack of layers.
+  layers: vector of {:w width :V potential}
+  opts: {:mu ...}
+  Returns map {:D D :L L} where L is total period length."
+  [E layers {:keys [mu] :or {mu 1.0}}]
+  (let [L (reduce + (map (fn [{:keys [w]}] (double w)) layers))
+        Mtot (reduce mat-mul [1.0 0.0 0.0 1.0]
+                     (map (fn [{:keys [w V]}] (layer-matrix E V w mu)) layers))
+        [m11 _ _ m22] Mtot
+        D (* 0.5 (+ m11 m22))]
+    {:D D :L (double L)})
+
+(defn principal-k-from-L
+  "Compute principal |k| in [0, π/L] from D and L."
+  [D L]
+  (let [D (clamp D -1.0 1.0)]
+    (/ (Math/acos D) (double L))))
+
+(defn band-edges-multilayer
+  "Scan energies to find bands using multilayer D(E) with period L.
+  Args:
+  - layers: vector of {:w :V}
+  - opts: {:mu :Emin :Emax :steps}
+  Returns vector of [Elo Ehi]."
+  [layers {:keys [mu Emin Emax steps] :or {mu 1.0 Emin 0.0 Emax 10.0 steps 10000}}]
+  (let [Emin (double Emin)
+        Emax (double Emax)
+        steps (long steps)
+        step (/ (- Emax Emin) (double steps))
+        g (fn [E]
+            (let [{:keys [D]} (dispersion-multilayer E layers {:mu mu})]
+              (- (Math/abs D) 1.0)))
+        energies (map #(+ Emin (* % step)) (range (inc steps)))]
+    (loop [es energies
+           last-E nil
+           last-g nil
+           in-band? false
+           start-E nil
+           acc []]
+      (if-let [E (first es)]
+        (let [val (g E)
+              allowed (<= val 1.0e-10)]
+          (cond
+            (and (not in-band?) allowed last-E)
+            (let [edge (bisect g last-E E 1.0e-8 64)]
+              (recur (rest es) E val true edge acc))
+
+            (and in-band? (not allowed) last-E)
+            (let [edge (bisect g last-E E 1.0e-8 64)
+                  acc (conj acc [start-E edge])]
+              (recur (rest es) E val false nil acc))
+
+            :else
+            (recur (rest es) E val in-band? start-E acc)))
+        (if in-band?
+          (conj acc [start-E (double Emax)])
+          acc)))))
