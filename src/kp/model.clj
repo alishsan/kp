@@ -138,7 +138,6 @@
 
             :else
             (recur (rest es) E val in-band? start-E acc)))
-        ;; end of grid
         (if in-band?
           (conj acc [start-E (double Emax)])
           acc)))))
@@ -188,7 +187,7 @@
                      (map (fn [{:keys [w V]}] (layer-matrix E V w mu)) layers))
         [m11 _ _ m22] Mtot
         D (* 0.5 (+ m11 m22))]
-    {:D D :L (double L)})
+    {:D D :L (double L)}))
 
 (defn principal-k-from-L
   "Compute principal |k| in [0, π/L] from D and L."
@@ -234,4 +233,5 @@
             (recur (rest es) E val in-band? start-E acc)))
         (if in-band?
           (conj acc [start-E (double Emax)])
-          acc)))))
+          acc))))
+)
