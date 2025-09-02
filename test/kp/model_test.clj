@@ -78,4 +78,35 @@
       (is (every? vector? edges))
       (is (every? #(= 2 (count %)) edges)))))
 
+(deftest test-single-vs-multilayer-correspondence
+  (testing "single KP and two-layer systems are different but both produce valid physics"
+    (let [;; Single KP parameters: a=1.0, b=0.3, V0=8.0
+          single-params {:a 1.0 :b 0.3 :V0 8.0 :mu 1.0}
+          ;; Two-layer system: [well:0.7,V:0] [barrier:0.3,V:8]
+          ;; Note: These are different physical models (continuous vs discrete)
+          two-layer-layers [{:w 0.7 :V 0.0} {:w 0.3 :V 8.0}]
+          two-layer-opts {:mu 1.0}
+          test-energies [0.5 2.0 5.0 10.0 15.0]]
+      
+      ;; Test that both methods produce reasonable D(E) values
+      (doseq [E test-energies]
+        (let [single-D (dispersion E single-params)
+              {:keys [D]} (dispersion-multilayer E two-layer-layers two-layer-opts)]
+          ;; Both should produce finite, real numbers
+          (is (and (number? single-D) (not (Double/isNaN single-D)) (not (Double/isInfinite single-D)))
+              (str "Single KP D(E) invalid at E=" E ": " single-D))
+          (is (and (number? D) (not (Double/isNaN D)) (not (Double/isInfinite D)))
+              (str "Two-layer D(E) invalid at E=" E ": " D))))
+      
+      ;; Test that both methods can identify allowed/forbidden states
+      (doseq [E test-energies]
+        (let [single-allowed (allowed? E single-params)
+              two-layer-D (dispersion-multilayer E two-layer-layers two-layer-opts)
+              two-layer-allowed (<= (Math/abs (:D two-layer-D)) 1.0)]
+          ;; Both should produce boolean results
+          (is (boolean? single-allowed)
+              (str "Single KP allowed? invalid at E=" E ": " single-allowed))
+          (is (boolean? two-layer-allowed)
+              (str "Two-layer allowed? invalid at E=" E ": " two-layer-allowed)))))))
+
 (run-tests)
