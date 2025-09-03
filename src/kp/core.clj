@@ -6,10 +6,10 @@
             [kp.model :as model]))
 
 (def cli-options
-  [["-a" "--a A" "Lattice period a"
-    :default 1.0 :parse-fn #(Double/parseDouble %)]
-   ["-b" "--b B" "Well width b (0 < b < a)"
+  [["-a" "--a A" "Half barrier width (barrier width = 2a)"
     :default 0.5 :parse-fn #(Double/parseDouble %)]
+   ["-b" "--b B" "Well width on each side (total well width = 2b)"
+    :default 0.25 :parse-fn #(Double/parseDouble %)]
    ["-V" "--V0 V0" "Barrier height V0"
     :default 10.0 :parse-fn #(Double/parseDouble %)]
    ["-m" "--mu MU" "mu = ħ^2/(2m)"
@@ -20,6 +20,12 @@
     :default 0.0 :parse-fn #(Double/parseDouble %)]
    ["--Emax" "--Emax EMAX" "Maximum energy"
     :default 50.0 :parse-fn #(Double/parseDouble %)]
+   ["--U1" "--U1 U1" "Height of first barrier (U1)"
+    :default 8.0 :parse-fn #(Double/parseDouble %)]
+   ["--U2" "--U2 U2" "Height of second barrier (U2, U2 >= U1)"
+    :default 12.0 :parse-fn #(Double/parseDouble %)]
+   ["--extended" "--extended" "Use extended KP model (U1-well-U2-well structure)"
+    :default false]
    ["--layers" "--layers LAYERS" (str "Compact multilayer spec. Examples: "
                                      "'b:0.3,U:8:0.2,b:0.3' (well, barrier V=8, well) "
                                      "or 'U:12:0.2,b:0.4,U:8:0.2,b:0.4' . ")
@@ -32,7 +38,8 @@
   (str "Kronig–Penney model CLI\n\n"
        "Options:\n" summary "\n\n"
        "Examples:\n"
-       "  lein run -a 1.0 -b 0.4 -V 12.0 --Emax 40 --steps 10000 -o dispersion.csv\n"
+       "  lein run -a 0.5 -b 0.25 -V 12.0 --Emax 40 --steps 10000 -o dispersion.csv\n"
+       "  lein run -a 0.3 -b 0.2 --U1 8.0 --U2 12.0 --extended --Emax 40 -o extended.csv\n"
        "  lein run --layers b:0.4,U:12:0.2,b:0.4 --Emax 40 --steps 10000 -o multi.csv\n"))
 
 (defn exit! [code msg]
@@ -99,6 +106,32 @@
     (println (str "Wrote samples to " out))
     (println (str "Wrote band edges to " (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")))))
 
+(defn process-extended-kp
+  "Process extended Kronig-Penney calculation (U1-well-U2-well) and write outputs."
+  [a b U1 U2 mu energies out]
+  (let [params {:a a :b b :U1 U1 :U2 U2 :mu mu}
+        rows (for [E energies
+                   :let [{:keys [D L]} (model/dispersion-extended-kp E params)
+                         allowed (<= (Math/abs D) 1.0)
+                         k (model/principal-k-extended-kp E params)
+                         kplus k
+                         kminus (- k)]]
+               [(format "%.12g" E)
+                (format "%.12g" D)
+                (if allowed "true" "false")
+                (format "%.12g" kminus)
+                (format "%.12g" kplus)])
+        header ["E" "D" "allowed" "k_minus" "k_plus"]]
+    (write-csv-data out header rows)
+    (let [edges (model/band-edges-extended-kp (merge params {:Emin (first energies) :Emax (last energies) :steps (count energies)}))
+          bands-out (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")
+          header2 ["E_lo" "E_hi"]
+          rows2 (for [[lo hi] edges]
+                  [(format "%.12g" lo) (format "%.12g" hi)])]
+      (write-csv-data bands-out header2 rows2))
+    (println (str "Wrote samples to " out))
+    (println (str "Wrote band edges to " (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")))))
+
 (defn process-single-kp
   "Process single Kronig-Penney calculation and write outputs."
   [a b V0 mu energies out]
@@ -125,22 +158,39 @@
     (println (str "Wrote samples to " out))
     (println (str "Wrote band edges to " (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")))))
 
+(defn validate-extended-kp-params
+  "Validate extended KP parameters."
+  [a b U1 U2]
+  (when (or (<= a 0.0) (<= b 0.0))
+    (exit! 1 (str "Require a > 0 and b > 0, got a=" a ", b=" b)))
+  (when (< U2 U1)
+    (exit! 1 (str "Require U2 >= U1, got U1=" U1 ", U2=" U2))))
+
 (defn validate-single-kp-params
   "Validate single KP parameters."
   [a b]
-  (when (not (< 0.0 b a))
-    (exit! 1 (str "Require 0 < b < a, got a=" a ", b=" b))))
+  (when (or (<= a 0.0) (<= b 0.0))
+    (exit! 1 (str "Require a > 0 and b > 0, got a=" a ", b=" b))))
 
 (defn -main [& args]
   (let [{:keys [options arguments errors summary]} (parse-opts args cli-options)
-        {:keys [a b V0 mu steps Emin Emax out layers]} options]
+        {:keys [a b V0 mu steps Emin Emax out layers U1 U2 extended]} options]
     (when (:help options) (exit! 0 (usage summary)))
     (when (seq errors) (exit! 1 (str (str/join "\n" errors) "\n\n" (usage summary))))
     
     (let [energies (generate-energy-grid Emin Emax steps)]
-      (if (some? layers)
+      (cond
+        (some? layers)
         ;; Multilayer transfer-matrix mode
         (process-multilayer layers energies mu out)
+        
+        extended
+        ;; Extended KP mode (U1-well-U2-well)
+        (do
+          (validate-extended-kp-params a b U1 U2)
+          (process-extended-kp a b U1 U2 mu energies out))
+        
+        :else
         ;; Single KP closed-form mode
         (do
           (validate-single-kp-params a b)
