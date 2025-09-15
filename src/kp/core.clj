@@ -3,7 +3,8 @@
             [clojure.java.io :as io]
             [clojure.data.csv :as csv]
             [clojure.string :as str]
-            [kp.model :as model]))
+            [kp.model-1d :as model-1d]
+            [kp.model-2d :as model-2d]))
 
 (def cli-options
   [["-a" "--a A" "Half barrier width (barrier width = 2a)"
@@ -30,6 +31,24 @@
                                      "'b:0.3,U:8:0.2,b:0.3' (well, barrier V=8, well) "
                                      "or 'U:12:0.2,b:0.4,U:8:0.2,b:0.4' . ")
     :default nil]
+   ["--2d" "--2d" "Use 2D Kronig-Penney model"
+    :default false]
+   ["--Lx" "--Lx LX" "Lattice constant in x-direction (2D only)"
+    :default 1.0 :parse-fn #(Double/parseDouble %)]
+   ["--Ly" "--Ly LY" "Lattice constant in y-direction (2D only)"
+    :default 1.0 :parse-fn #(Double/parseDouble %)]
+   ["--nx" "--nx NX" "Number of k-points in x-direction (2D only)"
+    :default 20 :parse-fn #(Long/parseLong %)]
+   ["--ny" "--ny NY" "Number of k-points in y-direction (2D only)"
+    :default 20 :parse-fn #(Long/parseLong %)]
+   ["--kx-min" "--kx-min KX_MIN" "Minimum kx value (2D only)"
+    :default 0.0 :parse-fn #(Double/parseDouble %)]
+   ["--kx-max" "--kx-max KX_MAX" "Maximum kx value (2D only)"
+    :default nil :parse-fn #(Double/parseDouble %)]
+   ["--ky-min" "--ky-min KY_MIN" "Minimum ky value (2D only)"
+    :default 0.0 :parse-fn #(Double/parseDouble %)]
+   ["--ky-max" "--ky-max KY_MAX" "Maximum ky value (2D only)"
+    :default nil :parse-fn #(Double/parseDouble %)]
    ["-o" "--out PATH" "Output CSV for dispersion samples"
     :default "dispersion.csv"]
    [nil "--help"]])
@@ -40,7 +59,8 @@
        "Examples:\n"
        "  lein run -a 0.5 -b 0.25 -V 12.0 --Emax 40 --steps 10000 -o dispersion.csv\n"
        "  lein run -a 0.3 -b 0.2 --U1 8.0 --U2 12.0 --extended --Emax 40 -o extended.csv\n"
-       "  lein run --layers b:0.4,U:12:0.2,b:0.4 --Emax 40 --steps 10000 -o multi.csv\n"))
+       "  lein run --layers b:0.4,U:12:0.2,b:0.4 --Emax 40 --steps 10000 -o multi.csv\n"
+       "  lein run --2d -a 0.5 -b 0.25 -V 12.0 --Lx 1.0 --Ly 1.0 --nx 20 --ny 20 -o dispersion-2d.csv\n"))
 
 (defn exit! [code msg]
   (binding [*out* (if (zero? code) *out* *err*)]
@@ -85,9 +105,9 @@
   [layers energies mu out]
   (let [layers* (parse-layers layers)
         rows (for [E energies
-                   :let [{:keys [D L]} (model/dispersion-multilayer E layers* {:mu mu})
+                   :let [{:keys [D L]} (model-1d/dispersion-multilayer E layers* {:mu mu})
                          allowed (<= (Math/abs D) 1.0)
-                         k (model/principal-k-from-L D L)
+                         k (model-1d/principal-k-from-L D L)
                          kplus k
                          kminus (- k)]]
                [(format "%.12g" E)
@@ -97,7 +117,7 @@
                 (format "%.12g" kplus)])
         header ["E" "D" "allowed" "k_minus" "k_plus"]]
     (write-csv-data out header rows)
-    (let [edges (model/band-edges-multilayer layers* {:mu mu :Emin (first energies) :Emax (last energies) :steps (count energies)})
+    (let [edges (model-1d/band-edges-multilayer layers* {:mu mu :Emin (first energies) :Emax (last energies) :steps (count energies)})
           bands-out (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")
           header2 ["E_lo" "E_hi"]
           rows2 (for [[lo hi] edges]
@@ -111,9 +131,9 @@
   [a b U1 U2 mu energies out]
   (let [params {:a a :b b :U1 U1 :U2 U2 :mu mu}
         rows (for [E energies
-                   :let [{:keys [D L]} (model/dispersion-extended-kp E params)
+                   :let [{:keys [D L]} (model-1d/dispersion-extended-kp E params)
                          allowed (<= (Math/abs D) 1.0)
-                         k (model/principal-k-extended-kp E params)
+                         k (model-1d/principal-k-extended-kp E params)
                          kplus k
                          kminus (- k)]]
                [(format "%.12g" E)
@@ -123,7 +143,7 @@
                 (format "%.12g" kplus)])
         header ["E" "D" "allowed" "k_minus" "k_plus"]]
     (write-csv-data out header rows)
-    (let [edges (model/band-edges-extended-kp (merge params {:Emin (first energies) :Emax (last energies) :steps (count energies)}))
+    (let [edges (model-1d/band-edges-extended-kp (merge params {:Emin (first energies) :Emax (last energies) :steps (count energies)}))
           bands-out (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")
           header2 ["E_lo" "E_hi"]
           rows2 (for [[lo hi] edges]
@@ -132,14 +152,54 @@
     (println (str "Wrote samples to " out))
     (println (str "Wrote band edges to " (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")))))
 
+(defn process-2d-kp
+  "Process 2D Kronig-Penney calculation and write outputs."
+  [a b V0 mu Lx Ly nx ny kx-min kx-max ky-min ky-max energies out]
+  (let [params {:a a :b b :V0 V0 :mu mu :Lx Lx :Ly Ly}
+        kx-max (or kx-max (/ Math/PI Lx))
+        ky-max (or ky-max (/ Math/PI Ly))
+        k-grid-params {:Lx Lx :Ly Ly :nx nx :ny ny 
+                       :kx-min kx-min :kx-max kx-max
+                       :ky-min ky-min :ky-max ky-max}
+        k-grid (model-2d/generate-2d-k-grid k-grid-params)
+        
+        ;; For 2D, we calculate band structure for each energy
+        rows (for [E energies
+                   [kx ky] k-grid
+                   :let [D (model-2d/dispersion-2d E kx ky params)
+                         allowed (<= (Math/abs D) 1.0)
+                         k-mag (model-2d/k-vector-magnitude kx ky)]]
+               [(format "%.12g" E)
+                (format "%.12g" kx)
+                (format "%.12g" ky)
+                (format "%.12g" D)
+                (if allowed "true" "false")
+                (format "%.12g" k-mag)])
+        header ["E" "kx" "ky" "D" "allowed" "k_magnitude"]]
+    (write-csv-data out header rows)
+    
+    ;; For 2D, we also generate a dispersion surface at a fixed energy
+    (let [E-fixed (/ (+ (first energies) (last energies)) 2.0)
+          surface (model-2d/dispersion-surface-2d E-fixed k-grid params)
+          surface-out (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-surface.csv")
+          surface-header ["kx" "ky" "D"]
+          surface-rows (for [[kx ky D] surface]
+                        [(format "%.12g" kx)
+                         (format "%.12g" ky)
+                         (format "%.12g" D)])]
+      (write-csv-data surface-out surface-header surface-rows))
+    
+    (println (str "Wrote 2D band structure to " out))
+    (println (str "Wrote dispersion surface to " (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-surface.csv")))))
+
 (defn process-single-kp
   "Process single Kronig-Penney calculation and write outputs."
   [a b V0 mu energies out]
   (let [params {:a a :b b :V0 V0 :mu mu}
         rows (for [E energies
-                   :let [D (model/dispersion E params)
+                   :let [D (model-1d/dispersion E params)
                          allowed (<= (Math/abs D) 1.0)
-                         k (model/principal-k E params)
+                         k (model-1d/principal-k E params)
                          kplus k
                          kminus (- k)]]
                [(format "%.12g" E)
@@ -149,7 +209,7 @@
                 (format "%.12g" kplus)])
         header ["E" "D" "allowed" "k_minus" "k_plus"]]
     (write-csv-data out header rows)
-    (let [edges (model/band-edges (merge params {:Emin (first energies) :Emax (last energies) :steps (count energies)}))
+    (let [edges (model-1d/band-edges (merge params {:Emin (first energies) :Emax (last energies) :steps (count energies)}))
           bands-out (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")
           header2 ["E_lo" "E_hi"]
           rows2 (for [[lo hi] edges]
@@ -174,12 +234,19 @@
 
 (defn -main [& args]
   (let [{:keys [options arguments errors summary]} (parse-opts args cli-options)
-        {:keys [a b V0 mu steps Emin Emax out layers U1 U2 extended]} options]
+        {:keys [a b V0 mu steps Emin Emax out layers U1 U2 extended 
+                Lx Ly nx ny kx-min kx-max ky-min ky-max]} options]
     (when (:help options) (exit! 0 (usage summary)))
     (when (seq errors) (exit! 1 (str (str/join "\n" errors) "\n\n" (usage summary))))
     
     (let [energies (generate-energy-grid Emin Emax steps)]
       (cond
+        (:2d options)
+        ;; 2D KP mode
+        (do
+          (validate-single-kp-params a b)
+          (process-2d-kp a b V0 mu Lx Ly nx ny kx-min kx-max ky-min ky-max energies out))
+        
         (some? layers)
         ;; Multilayer transfer-matrix mode
         (process-multilayer layers energies mu out)

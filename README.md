@@ -1,7 +1,43 @@
 # Kronig–Penney Model (Clojure)
 
-This project provides a simple Kronig–Penney model implementation using the standard dispersion relation for a periodic square potential:
+A comprehensive implementation of the Kronig–Penney model in Clojure, supporting both 1D and 2D periodic potentials.
 
+## Features
+
+- **1D Models**:
+  - Simple Kronig–Penney model
+  - Extended KP model (U1-well-U2-well structure)
+  - Multilayer transfer-matrix model
+- **2D Models**:
+  - 2D separable Kronig–Penney model
+  - 2D band structure calculations
+  - 2D Brillouin zone sampling
+- **Comprehensive CLI**: Single interface for all model variants
+- **Multiple output formats**: CSV data and band edge information
+
+## Project Structure
+
+```
+kp/
+├── src/kp/
+│   ├── core.clj           # Main CLI and utilities
+│   ├── common.clj         # Shared mathematical functions
+│   ├── model_1d.clj       # 1D Kronig-Penney implementations
+│   └── model_2d.clj       # 2D Kronig-Penney implementations
+├── test/kp/
+│   ├── model_1d_test.clj  # 1D model tests
+│   └── model_2d_test.clj  # 2D model tests
+├── examples/
+│   ├── 1d_examples/       # 1D usage examples
+│   └── 2d_examples/       # 2D usage examples
+└── README.md
+```
+
+## Quick Start
+
+### 1D Simple Kronig–Penney Model
+
+Basic periodic square potential:
 - Total period `L = 2a + 2b` where x=0 is at the center of the barrier
 - Barrier width `2a` (region with `V=V0`), centered at x=0
 - Well width `2b` (region with `V=0`), split as width `b` on each side of barrier
@@ -72,9 +108,24 @@ clojure -M:run -a 0.3 -b 0.2 --U1 10.0 --U2 10.0 --extended --Emax 40 -o extende
 clojure -M:run --layers "b:0.4,U:12:0.2,b:0.4" --Emax 40 --steps 10000 -o multi.csv
 ```
 
-Outputs:
+### 2D Kronig–Penney Model
+```bash
+# Basic 2D calculation with 20x20 k-point grid
+clojure -M:run --2d -a 0.5 -b 0.25 -V 12.0 --Lx 1.0 --Ly 1.0 --nx 20 --ny 20 -o 2d-kp.csv
+
+# Higher resolution k-grid
+clojure -M:run --2d -a 0.5 -b 0.25 -V 12.0 --Lx 1.0 --Ly 1.0 --nx 50 --ny 50 -o 2d-kp-hires.csv
+```
+
+## Output Formats
+
+### 1D Models
 - `dispersion.csv` with columns: `E, D, allowed, k_minus, k_plus`
 - `dispersion-bands.csv` with band intervals: `E_lo, E_hi`
+
+### 2D Models
+- `dispersion.csv` with columns: `E, kx, ky, D, allowed, k_magnitude`
+- `dispersion-surface.csv` with dispersion surface: `kx, ky, D`
 
 ## Notes
 

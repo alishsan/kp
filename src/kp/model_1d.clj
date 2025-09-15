@@ -1,41 +1,12 @@
-(ns kp.model)
+(ns kp.model-1d
+  "1D Kronig-Penney model implementations.
+   
+   This module contains all 1D variants:
+   - Simple Kronig-Penney model
+   - Extended KP model (U1-well-U2-well)
+   - Multilayer transfer-matrix model")
 
-(def ^:private eps 1.0e-12)
-
-(defn clamp
-  "Clamp x into [lo, hi]."
-  [x lo hi]
-  (-> x (max lo) (min hi)))
-
-(defn- safe
-  "Avoid exact zeros to reduce division/acos domain errors."
-  [x]
-  (let [ax (Math/abs x)]
-    (if (< ax eps)
-      (if (neg? x) (- eps) eps)
-      x)))
-
-(defn- alpha
-  "Wave number in the well region (V=0); mu = ħ^2/(2m)."
-  [E mu]
-  (let [E (max 0.0 E)]
-    (Math/sqrt (/ E (max eps mu)))))
-
-(defn- beta
-  "E < V0: evanescent wave number in barrier; mu = ħ^2/(2m)."
-  [V0 E mu]
-  (let [d (- V0 E)]
-    (if (pos? d)
-      (Math/sqrt (/ d (max eps mu)))
-      0.0)))
-
-(defn- gamma
-  "E > V0: oscillatory wave number in barrier; mu = ħ^2/(2m)."
-  [E V0 mu]
-  (let [d (- E V0)]
-    (if (pos? d)
-      (Math/sqrt (/ d (max eps mu)))
-      0.0)))
+(require '[kp.common :as common :refer [clamp safe alpha beta gamma bisect mat-mul layer-matrix]])
 
 (defn dispersion
   "Return D(E) such that cos(k L) = D(E) for the Kronig–Penney model.
@@ -65,17 +36,24 @@
             (let [beta (beta V0 E mu)
                   alpha (safe alpha)
                   beta (safe beta)]
-              (- (* (Math/cos (* alpha b)) (Math/cosh (* beta (* 2.0 a))))
-                 (* (/ (+ (* beta beta) (* alpha alpha)) (* 2.0 alpha beta))
-                    (Math/sin (* alpha b))
-                    (Math/sinh (* beta (* 2.0 a))))))
+              ;; For E < V0: cos(kL) = cos(αb)cosh(βa) + (α²+β²)/(2αβ) sin(αb)sinh(βa)
+              ;; But we need to be careful about the coordinate system
+              (if (or (zero? alpha) (zero? beta))
+                1.0  ; Handle edge case
+                (+ (* (Math/cos (* alpha b)) (Math/cosh (* beta (* 2.0 a))))
+                   (* (/ (+ (* beta beta) (* alpha alpha)) (* 2.0 alpha beta))
+                      (Math/sin (* alpha b))
+                      (Math/sinh (* beta (* 2.0 a)))))))
             (let [gamma (gamma E V0 mu)
                   alpha (safe alpha)
                   gamma (safe gamma)]
-              (- (* (Math/cos (* alpha b)) (Math/cos (* gamma (* 2.0 a))))
-                 (* (/ (- (* gamma gamma) (* alpha alpha)) (* 2.0 alpha gamma))
-                    (Math/sin (* alpha b))
-                    (Math/sin (* gamma (* 2.0 a)))))))]
+              ;; For E > V0: cos(kL) = cos(αb)cos(γa) - (γ²-α²)/(2αγ) sin(αb)sin(γa)
+              (if (or (zero? alpha) (zero? gamma))
+                1.0  ; Handle edge case
+                (- (* (Math/cos (* alpha b)) (Math/cos (* gamma (* 2.0 a))))
+                   (* (/ (- (* gamma gamma) (* alpha alpha)) (* 2.0 alpha gamma))
+                      (Math/sin (* alpha b))
+                      (Math/sin (* gamma (* 2.0 a))))))))]
     D))
 
 (defn allowed?
@@ -92,21 +70,6 @@
         L (+ (* 2.0 a) (* 2.0 b))  ; Total period
         k (/ (Math/acos D) (double L))]
     k))
-
-(defn- bisect
-  "Bisection on function f between xlo and xhi where f(xlo) and f(xhi) have opposite signs.
-  Returns root with absolute tolerance tol or after max-it iterations."
-  [f xlo xhi tol max-it]
-  (loop [lo (double xlo)
-         hi (double xhi)
-         it 0]
-    (let [mid (+ lo (* 0.5 (- hi lo)))
-          fmid (f mid)
-          flo (f lo)]
-      (cond
-        (or (<= (Math/abs (- hi lo)) tol) (>= it max-it)) mid
-        (<= (* fmid flo) 0.0) (recur lo mid (inc it))
-        :else (recur mid hi (inc it))))))
 
 (defn band-edges
   "Scan energy grid to find approximate band edges where |D(E)| = 1.
@@ -146,40 +109,6 @@
         (if in-band?
           (conj acc [start-E (double Emax)])
           acc)))))
-
-;; ---------------- Multilayer transfer-matrix formulation ----------------
-
-(defn- layer-matrix
-  "Transfer matrix for a single layer with constant potential V and width w at energy E.
-  Uses standard 2x2 form mapping [psi; psi'] across the layer.
-  Returns a vector [m11 m12 m21 m22]."
-  [E V w mu]
-  (let [mu (double (or mu 1.0))
-        E (double E)
-        V (double V)
-        w (double w)
-        d (- E V)]
-    (if (pos? d)
-      (let [k (Math/sqrt (/ d mu))
-            kw (* k w)
-            c (Math/cos kw)
-            s (Math/sin kw)
-            invk (/ 1.0 (safe k))]
-        [c (* invk s) (* -1.0 k s) c])
-      (let [kappa (Math/sqrt (/ (- V E) mu))
-            kw (* kappa w)
-            ch (Math/cosh kw)
-            sh (Math/sinh kw)
-            invk (/ 1.0 (safe kappa))]
-        [ch (* invk sh) (* kappa sh) ch]))))
-
-(defn- mat-mul
-  "Multiply two 2x2 matrices (flattened [a b c d])."
-  [[a b c d] [e f g h]]
-  [(+ (* a e) (* b g))
-   (+ (* a f) (* b h))
-   (+ (* c e) (* d g))
-   (+ (* c f) (* d h))])
 
 ;; ---------------- Extended Kronig-Penney model: U1-well-U2-well structure ----------------
 
@@ -274,6 +203,8 @@
           (conj acc [start-E (double Emax)])
           acc)))))
 
+;; ---------------- Multilayer transfer-matrix formulation ----------------
+
 (defn dispersion-multilayer
   "Compute D(E) = 0.5 * Tr(M_total) for a stack of layers.
   layers: vector of {:w width :V potential}
@@ -331,5 +262,4 @@
             (recur (rest es) E val in-band? start-E acc)))
         (if in-band?
           (conj acc [start-E (double Emax)])
-          acc))))
-)
+          acc)))))
