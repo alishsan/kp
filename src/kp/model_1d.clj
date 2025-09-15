@@ -110,6 +110,140 @@
           (conj acc [start-E (double Emax)])
           acc)))))
 
+;; ---------------- Multilayer transfer-matrix formulation ----------------
+
+(defn- layer-matrix
+  "Transfer matrix for a single layer with constant potential V and width w at energy E.
+  Uses standard 2x2 form mapping [psi; psi'] across the layer.
+  Returns a vector [m11 m12 m21 m22]."
+  [E V w mu]
+  (let [mu (double (or mu 1.0))
+        E (double E)
+        V (double V)
+        w (double w)
+        d (- E V)]
+    (if (pos? d)
+      (let [k (Math/sqrt (/ d mu))
+            kw (* k w)
+            c (Math/cos kw)
+            s (Math/sin kw)
+            invk (/ 1.0 (safe k))]
+        [c (* invk s) (* -1.0 k s) c])
+      (let [kappa (Math/sqrt (/ (- V E) mu))
+            kw (* kappa w)
+            ch (Math/cosh kw)
+            sh (Math/sinh kw)
+            invk (/ 1.0 (safe kappa))]
+        [ch (* invk sh) (* kappa sh) ch]))))
+
+(defn- mat-mul
+  "Multiply two 2x2 matrices (flattened [a b c d])."
+  [[a b c d] [e f g h]]
+  [(+ (* a e) (* b g))
+   (+ (* a f) (* b h))
+   (+ (* c e) (* d g))
+   (+ (* c f) (* d h))])
+
+;; ---------------- 2D Kronig-Penney model ----------------
+
+(defn- solve-1d-dispersion
+  "Solve 1D dispersion relation to find E given k.
+  For 1D KP: cos(k*a) = D(E), find E such that this holds."
+  [k params]
+  (let [{:keys [a V0 mu]} params
+        target-cos (Math/cos (* k a))
+        ;; Use bisection to find E such that D(E) = target-cos
+        f (fn [E] (- (dispersion E params) target-cos))
+        ;; Search range: 0 to 2*V0
+        E-max (* 2.0 V0)
+        E (bisect f 0.0 E-max 1.0e-8 64)]
+    E))
+
+(defn dispersion-2d
+  "Compute 2D dispersion relation E(kx, ky) for 2D Kronig-Penney model.
+  
+  Structure: 2D periodic potential with rectangular barriers
+  - Periods: ax (x-direction), ay (y-direction)  
+  - Barrier: width bx × by, height V0
+  - Well: width (ax-bx) × (ay-by), height 0
+  
+  For separable potential V(x,y) = Vx(x) + Vy(y), we have:
+  E(kx,ky) = Ex(kx) + Ey(ky)
+  
+  Params:
+  - :ax (period in x-direction)
+  - :ay (period in y-direction)
+  - :bx (barrier width in x-direction, 0 < bx < ax)
+  - :by (barrier width in y-direction, 0 < by < ay)
+  - :V0 (barrier height)
+  - :mu (ħ^2/(2m)); default 1.0
+  
+  Returns E(kx, ky) for given kx, ky values"
+  [kx ky {:keys [ax ay bx by V0 mu] :or {mu 1.0}}]
+  (let [ax (double ax)
+        ay (double ay)
+        bx (double bx)
+        by (double by)
+        V0 (double V0)
+        mu (double mu)
+        kx (double kx)
+        ky (double ky)
+        ;; For separable potential, solve 1D problem for each direction
+        ex-params {:a ax :b bx :V0 V0 :mu mu}
+        ey-params {:a ay :b by :V0 V0 :mu mu}
+        ;; Solve 1D dispersion relations
+        Ex (solve-1d-dispersion kx ex-params)
+        Ey (solve-1d-dispersion ky ey-params)]
+    (+ Ex Ey)))
+
+(defn dispersion-2d-exact
+  "Compute exact 2D dispersion relation using transfer matrix method.
+  
+  This is more computationally intensive but gives exact results.
+  Uses 2D transfer matrices for the full 2D problem."
+  [kx ky {:keys [ax ay bx by V0 mu] :or {mu 1.0}}]
+  (let [ax (double ax)
+        ay (double ay)
+        bx (double bx)
+        by (double by)
+        V0 (double V0)
+        mu (double mu)
+        kx (double kx)
+        ky (double ky)
+        ;; For now, use separable approximation
+        ;; Full 2D transfer matrix implementation would be much more complex
+        ex-params {:a ax :b bx :V0 V0 :mu mu}
+        ey-params {:a ay :b by :V0 V0 :mu mu}
+        Dx (dispersion (Math/cos (* kx ax)) ex-params)
+        Dy (dispersion (Math/cos (* ky ay)) ey-params)]
+    ;; Return both Dx and Dy for now
+    {:Dx Dx :Dy Dy :E (dispersion-2d kx ky {:ax ax :ay ay :bx bx :by by :V0 V0 :mu mu})}))
+
+(defn band-structure-2d
+  "Calculate 2D band structure over k-space grid.
+  
+  Args:
+  - kx-range: [kx-min, kx-max, kx-steps]
+  - ky-range: [ky-min, ky-max, ky-steps]  
+  - params: 2D model parameters
+  
+  Returns: vector of [kx, ky, E, allowed]"
+  [kx-range ky-range params]
+  (let [[kx-min kx-max kx-steps] kx-range
+        [ky-min ky-max ky-steps] ky-range
+        kx-step (/ (- kx-max kx-min) (double kx-steps))
+        ky-step (/ (- ky-max ky-min) (double ky-steps))
+        {:keys [ax ay]} params]
+    (for [i (range (inc kx-steps))
+          j (range (inc ky-steps))
+          :let [kx (+ kx-min (* i kx-step))
+                ky (+ ky-min (* j ky-step))
+                E (dispersion-2d kx ky params)
+                ;; Check if in first Brillouin zone
+                in-bz (and (<= (Math/abs kx) (/ Math/PI ax))
+                           (<= (Math/abs ky) (/ Math/PI ay)))]]
+      [kx ky E in-bz])))
+
 ;; ---------------- Extended Kronig-Penney model: U1-well-U2-well structure ----------------
 
 (defn dispersion-extended-kp

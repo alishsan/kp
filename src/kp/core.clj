@@ -27,6 +27,20 @@
     :default 12.0 :parse-fn #(Double/parseDouble %)]
    ["--extended" "--extended" "Use extended KP model (U1-well-U2-well structure)"
     :default false]
+   ["--2d" "--2d" "Use 2D Kronig-Penney model"
+    :default false]
+   ["--ax" "--ax AX" "Period in x-direction for 2D model"
+    :default 1.0 :parse-fn #(Double/parseDouble %)]
+   ["--ay" "--ay AY" "Period in y-direction for 2D model"
+    :default 1.0 :parse-fn #(Double/parseDouble %)]
+   ["--bx" "--bx BX" "Barrier width in x-direction for 2D model (0 < bx < ax)"
+    :default 0.5 :parse-fn #(Double/parseDouble %)]
+   ["--by" "--by BY" "Barrier width in y-direction for 2D model (0 < by < ay)"
+    :default 0.5 :parse-fn #(Double/parseDouble %)]
+   ["--kx-steps" "--kx-steps N" "Number of kx points for 2D band structure"
+    :default 50 :parse-fn #(Long/parseLong %)]
+   ["--ky-steps" "--ky-steps N" "Number of ky points for 2D band structure"
+    :default 50 :parse-fn #(Long/parseLong %)]
    ["--layers" "--layers LAYERS" (str "Compact multilayer spec. Examples: "
                                      "'b:0.3,U:8:0.2,b:0.3' (well, barrier V=8, well) "
                                      "or 'U:12:0.2,b:0.4,U:8:0.2,b:0.4' . ")
@@ -126,6 +140,30 @@
     (println (str "Wrote samples to " out))
     (println (str "Wrote band edges to " (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")))))
 
+(defn process-2d-kp
+  "Process 2D Kronig-Penney calculation and write outputs."
+  [ax ay bx by V0 mu kx-steps ky-steps out]
+  (let [params {:ax ax :ay ay :bx bx :by by :V0 V0 :mu mu}
+        ;; Calculate k-space ranges (first Brillouin zone)
+        kx-min (- (/ Math/PI ax))
+        kx-max (/ Math/PI ax)
+        ky-min (- (/ Math/PI ay))
+        ky-max (/ Math/PI ay)
+        kx-range [kx-min kx-max kx-steps]
+        ky-range [ky-min ky-max ky-steps]
+        ;; Calculate 2D band structure
+        band-data (model/band-structure-2d kx-range ky-range params)
+        rows (for [[kx ky E in-bz] band-data]
+               [(format "%.12g" kx)
+                (format "%.12g" ky)
+                (format "%.12g" E)
+                (if in-bz "true" "false")])
+        header ["kx" "ky" "E" "in_brillouin_zone"]]
+    (write-csv-data out header rows)
+    (println (str "Wrote 2D band structure to " out))
+    (println (str "Grid: " kx-steps " x " ky-steps " points"))
+    (println (str "k-space: kx ∈ [" kx-min ", " kx-max "], ky ∈ [" ky-min ", " ky-max "]"))))
+
 (defn process-extended-kp
   "Process extended Kronig-Penney calculation (U1-well-U2-well) and write outputs."
   [a b U1 U2 mu energies out]
@@ -217,6 +255,18 @@
       (write-csv-data bands-out header2 rows2))
     (println (str "Wrote samples to " out))
     (println (str "Wrote band edges to " (str (if (.endsWith out ".csv") (subs out 0 (- (count out) 4)) out) "-bands.csv")))))
+
+(defn validate-2d-kp-params
+  "Validate 2D KP parameters."
+  [ax ay bx by]
+  (when (or (<= ax 0.0) (<= ay 0.0))
+    (exit! 1 (str "Require ax > 0 and ay > 0, got ax=" ax ", ay=" ay)))
+  (when (or (<= bx 0.0) (<= by 0.0))
+    (exit! 1 (str "Require bx > 0 and by > 0, got bx=" bx ", by=" by)))
+  (when (>= bx ax)
+    (exit! 1 (str "Require bx < ax, got ax=" ax ", bx=" bx)))
+  (when (>= by ay)
+    (exit! 1 (str "Require by < ay, got ay=" ay ", by=" by))))
 
 (defn validate-extended-kp-params
   "Validate extended KP parameters."
