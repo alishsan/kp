@@ -152,7 +152,7 @@
         kx-range [kx-min kx-max kx-steps]
         ky-range [ky-min ky-max ky-steps]
         ;; Calculate 2D band structure
-        band-data (model/band-structure-2d kx-range ky-range params)
+        band-data (model-2d/band-structure-2d kx-range ky-range params)
         rows (for [[kx ky E in-bz] band-data]
                [(format "%.12g" kx)
                 (format "%.12g" ky)

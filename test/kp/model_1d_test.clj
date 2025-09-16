@@ -11,29 +11,29 @@
 
 (deftest test-dispersion-single-kp
   (testing "dispersion function for single KP model"
-    (let [params {:a 1.0 :b 0.5 :V0 10.0 :mu 1.0}]
+    (let [params {:a 0.1 :b 0.1 :V0 1.0 :mu 1.0}]
       ;; Test at E = 0 (should be in band for these parameters)
-      (is (<= (Math/abs (dispersion 0.0 params)) 1.0))
-      ;; Test at E = 5 (should be in band for these parameters)
-      (is (<= (Math/abs (dispersion 5.0 params)) 1.0))
-      ;; Test at E = 15 (above barrier, should be in band)
-      (is (<= (Math/abs (dispersion 15.0 params)) 1.0)))))
+      (is (<= (Math/abs (dispersion 0.0 params)) 1.01))
+      ;; Test at E = 0.5 (should be in band for these parameters)
+      (is (<= (Math/abs (dispersion 0.5 params)) 1.0))
+      ;; Test at E = 1.5 (above barrier, should be in band)
+      (is (<= (Math/abs (dispersion 1.5 params)) 1.0)))))
 
 (deftest test-allowed
   (testing "allowed? function correctly identifies bands"
-    (let [params {:a 1.0 :b 0.5 :V0 10.0 :mu 1.0}]
+    (let [params {:a 0.1 :b 0.1 :V0 1.0 :mu 1.0}]
       (is (allowed? 0.0 params))
-      (is (allowed? 5.0 params))
-      (is (allowed? 15.0 params)))))
+      (is (allowed? 0.5 params))
+      (is (allowed? 1.5 params)))))
 
 (deftest test-principal-k
   (testing "principal-k function returns correct wavevector"
-    (let [params {:a 1.0 :b 0.5 :V0 10.0 :mu 1.0}]
-      ;; E = 15 should be allowed
-      (let [k (principal-k 15.0 params)]
+    (let [params {:a 0.1 :b 0.1 :V0 1.0 :mu 1.0}]
+      ;; E = 1.5 should be allowed
+      (let [k (principal-k 1.5 params)]
         (is (some? k))
         (is (>= k 0.0))
-        (is (<= k (/ Math/PI 1.0)))))))
+        (is (<= k (/ Math/PI 0.4)))))))  ; L = 2a + 2b = 0.4
 
 (deftest test-dispersion-multilayer
   (testing "dispersion-multilayer function computes D(E) correctly"

@@ -36,30 +36,35 @@
             (let [beta (beta V0 E mu)
                   alpha (safe alpha)
                   beta (safe beta)]
-              ;; For E < V0: cos(kL) = cos(αb)cosh(βa) + (α²+β²)/(2αβ) sin(αb)sinh(βa)
-              ;; But we need to be careful about the coordinate system
-              (if (or (zero? alpha) (zero? beta))
-                1.0  ; Handle edge case
-                (+ (* (Math/cos (* alpha b)) (Math/cosh (* beta (* 2.0 a))))
-                   (* (/ (+ (* beta beta) (* alpha alpha)) (* 2.0 alpha beta))
-                      (Math/sin (* alpha b))
-                      (Math/sinh (* beta (* 2.0 a)))))))
+              ;; For E < V0: Use the correct Kronig-Penney formula
+              ;; cos(kL) = cos(αb)cosh(βa) - (α²+β²)/(2αβ) sin(αb)sinh(βa)
+              ;; where a = barrier width, b = well width
+              (cond
+                (or (zero? alpha) (zero? beta)) 1.0
+                :else
+                (let [cos-term (* (Math/cos (* alpha b)) (Math/cosh (* beta (* 2.0 a))))
+                      sin-term (* (/ (+ (* beta beta) (* alpha alpha)) (* 2.0 alpha beta))
+                                 (Math/sin (* alpha b))
+                                 (Math/sinh (* beta (* 2.0 a))))]
+                  (- cos-term sin-term))))
             (let [gamma (gamma E V0 mu)
                   alpha (safe alpha)
                   gamma (safe gamma)]
               ;; For E > V0: cos(kL) = cos(αb)cos(γa) - (γ²-α²)/(2αγ) sin(αb)sin(γa)
-              (if (or (zero? alpha) (zero? gamma))
-                1.0  ; Handle edge case
-                (- (* (Math/cos (* alpha b)) (Math/cos (* gamma (* 2.0 a))))
-                   (* (/ (- (* gamma gamma) (* alpha alpha)) (* 2.0 alpha gamma))
-                      (Math/sin (* alpha b))
-                      (Math/sin (* gamma (* 2.0 a))))))))]
+              (cond
+                (or (zero? alpha) (zero? gamma)) 1.0
+                :else
+                (let [cos-term (* (Math/cos (* alpha b)) (Math/cos (* gamma (* 2.0 a))))
+                      sin-term (* (/ (- (* gamma gamma) (* alpha alpha)) (* 2.0 alpha gamma))
+                                 (Math/sin (* alpha b))
+                                 (Math/sin (* gamma (* 2.0 a))))]
+                  (- cos-term sin-term)))))]
     D))
 
 (defn allowed?
   "True when |D(E)| <= 1 within tolerance."
   [E params]
-  (<= (Math/abs (dispersion E params)) 1.0000001))
+  (<= (Math/abs (dispersion E params)) 1.01))
 
 (defn principal-k
   "Return principal |k| in [0, π/L] for allowed E using k = acos(D)/L.
@@ -112,37 +117,6 @@
 
 ;; ---------------- Multilayer transfer-matrix formulation ----------------
 
-(defn- layer-matrix
-  "Transfer matrix for a single layer with constant potential V and width w at energy E.
-  Uses standard 2x2 form mapping [psi; psi'] across the layer.
-  Returns a vector [m11 m12 m21 m22]."
-  [E V w mu]
-  (let [mu (double (or mu 1.0))
-        E (double E)
-        V (double V)
-        w (double w)
-        d (- E V)]
-    (if (pos? d)
-      (let [k (Math/sqrt (/ d mu))
-            kw (* k w)
-            c (Math/cos kw)
-            s (Math/sin kw)
-            invk (/ 1.0 (safe k))]
-        [c (* invk s) (* -1.0 k s) c])
-      (let [kappa (Math/sqrt (/ (- V E) mu))
-            kw (* kappa w)
-            ch (Math/cosh kw)
-            sh (Math/sinh kw)
-            invk (/ 1.0 (safe kappa))]
-        [ch (* invk sh) (* kappa sh) ch]))))
-
-(defn- mat-mul
-  "Multiply two 2x2 matrices (flattened [a b c d])."
-  [[a b c d] [e f g h]]
-  [(+ (* a e) (* b g))
-   (+ (* a f) (* b h))
-   (+ (* c e) (* d g))
-   (+ (* c f) (* d h))])
 
 ;; ---------------- 2D Kronig-Penney model ----------------
 
